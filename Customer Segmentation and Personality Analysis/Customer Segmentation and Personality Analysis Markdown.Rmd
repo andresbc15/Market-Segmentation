@@ -1,0 +1,532 @@
+---
+title: "Spending Habits: Customer Segmentation of the Food & Beverage Industry"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    toc: true
+    toc_float: true
+---
+
+### Team Members
+* Pedro Dutra
+* Andres Cojuangco
+* Ishan Modi
+
+### Problem Statement
+For this project, we sought to determine the different customer archetypes for Food and Beverage categories. To accomplish this, we will perform a cluster analysis based on the spending habits, customer attributes, and customer reactions to a series of marketing campaigns.       
+It is vital for businesses to understand their customers and how they are grouped. By understanding the different customer segments, a business can create more targeted advertisements that cater to each group and adjust products and services for specific customer needs to drive greater revenue and profits. We hope that by doing this analysis, businesses in the Food and Beverage space can make more informed decisions and advance further growth.
+  
+### Data Description
+The dataset is provided by Dr. Omar Romero-Hernandez, a researcher and professor at U.C. Berkeley's Haas School of Business and the Hult International Business School. Unfortunately, there is no information provided on how the data was collected. The link to it can be found here: https://www.kaggle.com/datasets/imakash3011/customer-personality-analysis         
+The dataset contains 27 columns and 2240 rows, and can be thematically divided into 3 sections: 
+
+* **Customer Attributes (10 columns)**,
+  + *ID:* Customer's unique identifier (int)
+  + *Year_Birth:* Customer's birth year (int)
+  + *Education:* Customer's education level (obj)
+  + *Marital_Status:* Customer's marital status  (obj)
+  + *Income:* Customer's yearly household income (int)
+  + *Kidhome:* Number of children in customer's household (int)
+  + *Teenhome:* Number of teenagers in customer's household (int)
+  + *Dt_Customer:* Date of customer's enrollment with the company (obj)
+  + *Recency:* Number of days since customer's last purchase (int)
+  + *Complain:* 1 if customer complained in the last 2 years, 0 otherwise (int)     
+  
+* **Customer Behavior (11 columns)**:
+  + *MntWines:* Amount spent on wine in last 2 years (int)
+  + *MntFruits:* Amount spent on fruits in last 2 years (int)
+  + *MntMeatProducts:* Amount spent on meat in last 2 years (int)
+  + *MntFishProducts:* Amount spent on fish in last 2 years (int)
+  + *MntSweetProducts:* Amount spent on sweets in last 2 years (int)
+  + *MntGoldProds:* Amount spent on gold in last 2 years (int)
+  + *NumWebPurchases:* Number of purchases made through the companyâ€™s web site (int)
+  + *NumCatalogPurchases:* Number of purchases made using a catalogue (int)
+  + *NumStorePurchases:* Number of purchases made directly in stores (int)
+  + *NumWebVisitsMonth:* Number of visits to companyâ€™s web site in the last month (int)
+  + *NumDealsPurchases:* Number of purchases made with a discount (int)    
+  
+* **Customer Response to Marketing Activations (6 columns)**:
+  + *AcceptedCmp1:* 1 if customer accepted the offer in the 1st campaign, 0 otherwise (int)
+  + *AcceptedCmp2:* 1 if customer accepted the offer in the 2nd campaign, 0 otherwise (int)
+  + *AcceptedCmp3:* 1 if customer accepted the offer in the 3rd campaign, 0 otherwise (int)
+  + *AcceptedCmp4:* 1 if customer accepted the offer in the 4th campaign, 0 otherwise (int)
+  + *AcceptedCmp5:* 1 if customer accepted the offer in the 5th campaign, 0 otherwise (int)
+  + *Response:* 1 if customer accepted the offer in the last campaign, 0 otherwise (int)     
+
+
+
+### Data Preprocessing
+**Libraries**
+```{r}
+# libraries
+
+library(remotes)
+if(!require(remotes)){
+   install.packages("remotes")
+}
+remotes::install_github("rkabacoff/qacDR")
+
+
+library(readr)
+library(qacBase)
+library(qacDR)
+library(mice)
+library(VIM)
+library(tidyverse)
+library(ggplot2)
+library(vcd)
+library(factoextra)
+library(reshape2)
+```
+
+**Loading the Data**
+```{r}
+# load the data
+market <- read_delim("https://raw.githubusercontent.com/amankharwal/Website-data/master/marketing_campaign.csv", delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+# convert data to a data frame
+market <- as.data.frame(market)
+```
+
+**Data Management and Univariate Analysis**   
+In this section of code, we analyzed each of the variables individually. This allowed us to identify variables that are not needed, identify and remove outliers (an important step for k-means clustering), and turn ordinal/nominal data into factors. We performed six major data management executions. 
+
+**First**, we omitted missing values with listwise deletion. This is because we only had 24 missing values out of 2240 observations, which were centered on the one variable Income. Since this is a very small number of missing data, in which removing such values would have a negligible impact on further analyses, we did not need to resort to kNN imputation.
+
+```{r}
+# checking the contents
+contents(market)
+
+# visiualizing missing data
+md.pattern(market, rotate.names = T)
+
+# omit missing data
+market = na.omit(market)
+```
+
+**Second**, we removed variables ID, Z_CostContact, Z_Revenue, Dt_Customer, and Complain. This is because they were either redundant, as in the case of ID, or had no explanation for their values, as in the case of Z_CostContact and Z_Revenue, or were not necessary for our particular analysis, as in the case of Dt_Customer and Complain.    
+More specific explanations will be provided next to each data manipulation.
+
+```{r}
+# delete id
+market = market %>% select(-ID)
+
+# Exploring Z_CostContact and Z_Revenue
+z <- market %>% select(Z_CostContact, Z_Revenue)
+
+head(z, 20)
+
+#Deleting Z_CostContact and Z_Revenue
+market = market %>% select(-Z_CostContact, -Z_Revenue)
+
+```
+
+Don't need each customer's unique ID-- hence, remove.   
+Unsure what Z_CostContract and Z_Revenue mean as they were not provided with the data description-- hence, remove.   
+
+```{r}
+# Exploring Complaints
+market$Complain 
+
+# Deleting Complain
+market = market %>% select(-Complain)
+```
+
+Very low percentage of negative complaints and so it was treated as negligible-- hence, remove.
+
+```{r}
+# Exploring Dt_Customer
+head(market$Dt_Customer)
+
+#Deleting Dt_Customer
+market = market %>% select(-Dt_Customer)
+
+```
+
+Don't need date of each customer's enrollment in the company for our analysis-- hence, remove.   
+
+**Third**, we removed outliers in variable Year_Birth and transformed it into a new variable Age. Changing date of birth into age (in years) eases comprehension, particularly when visualizing data.
+
+```{r}
+# Exploring Year of Birth
+table(market$Year_Birth)
+
+# Removing for Outliers in Year_Birth
+summary(market$Year_Birth)
+outlier = boxplot(market$Year_Birth, plot=T)$out
+market = market[-which(market$Year_Birth %in% outlier),]
+boxplot(market$Year_Birth)
+
+# Get the Age from year of birth
+market$reference <- 2015
+market$Age <- market$reference - market$Year_Birth
+market <- market %>% select(-c("Year_Birth","reference"))
+
+```
+
+**Fourth**, we removed unusual answers in variable Marital_Status that were likely answered as a joke. We then collapsed similar responses into a factor with two levels: "1", which indicates one is not legally married, and "2", which indicates one is married.
+
+```{r}
+# Exploring Marital Status
+ggplot(market) + geom_bar(aes(x=Marital_Status))
+
+# Removing unusual answers
+
+market = market %>% 
+  filter(Marital_Status != "YOLO") %>% 
+  filter(Marital_Status != "Alone") %>% 
+  filter(Marital_Status != "Absurd")
+
+# Converting to Factor
+market$Marital_Status <- fct_collapse(market$Marital_Status,
+"1" = c("Divorced","Single","Widow"),"2" = c("Married","Together"))
+market$Marital_Status <- as.numeric(levels(market$Marital_Status))[market$Marital_Status]
+
+```
+
+**Fifth**, we converted variable Education into a factor of three levels: "1", which is a receiver of basic education, "2", which is an undergraduate degree-holder, and "3", which is a higher education degree-holder.
+
+```{r}
+# Exploring Education
+ggplot(market) + geom_bar(aes(x=Education))
+
+# Converting to Factor
+market$Education <- fct_collapse(market$Education,
+"3" = c("2n Cycle", "Master","PhD"),"1" = "Basic",
+"2" = "Graduation")
+market$Education <- as.numeric(levels(market$Education))[market$Education]
+```
+
+**Finally**, we removed outliers in variable Income. This is performed because such outliers could skew further analyses.
+
+```{r}
+# Exploring Income
+ggplot(market) + geom_histogram(aes(x=Income), bins = 100)
+
+#Removing Outliers in Income
+summary(market$Income)
+outliers = boxplot(market$Income, plot=T)$out
+market = market[-which(market$Income %in% outliers),]
+boxplot(market$Income)
+
+```
+
+**Exploring the rest of the Data**   
+We then explored the rest of the dataset, scanning for any other data management decisions we could undertake -- and of course, to also familiarize ourselves with all the data!
+
+```{r}
+# Exploring Kidhome
+ggplot(market) + geom_bar(aes(x=Kidhome))
+
+```
+
+This will be useful for further analysis and there contains no unusual data. 
+
+```{r}
+# Exploring Teenhome
+ggplot(market) + geom_bar(aes(x=Teenhome))
+
+```
+
+This will be useful for further analysis and there contains no unusual data. 
+
+```{r}
+# Exploring Recency
+ggplot(market) + geom_histogram(aes(x=Recency), bins = 100)
+
+```
+
+This appears to be evenly distributed.
+
+```{r}
+# Exploring amount spent on products
+amt_spnt <- market %>% select(MntWines,MntFruits,MntMeatProducts,MntFishProducts,MntSweetProducts,MntGoldProds)
+
+head(amt_spnt)
+```
+
+This will be useful for further analysis. 
+
+```{r}
+# Exploring customer actions
+num_actions <- market %>% select(NumDealsPurchases,NumCatalogPurchases,NumWebPurchases,NumStorePurchases,NumWebVisitsMonth)
+
+head(num_actions)
+```
+
+This will be useful for further analysis.
+
+```{r}
+# Exploring Recency
+head(market$Recency)
+
+```
+
+This will be useful for further analysis.   
+
+### Statistical Approaches 
+After exploring all the data, we realized just how vast the dataset was -- and that we could ease comprehension by reducing the number of features. This led us to doing a Principal Component Analysis.
+
+**PCA Anlysis**
+```{r}
+# Doing PCA
+fit = PCA(market)
+
+# Plotting scree plot
+scree_plot(market)
+
+# Chose 5 PCs
+fit = PCA(market, nfactors = 5)
+
+#Explains 56% of Var
+plot(fit, sort = T)
+```
+
+Based on the scree plot, we used five factors for our principle component analysis. After plotting the results, we got a cumulative variance of 56%. The variance was low because we believe that the different types of data that we had (factors, ages, income) all varied vastly in numbers, making it difficult to project in two dimensions. 
+
+**Cluster Analysis**    
+Now, we were ready to perform a k-means cluster analysis. First, we used a WSS plot to find the optimal number of clusters. Then, we utilized NbClust to validate this finding.
+```{r}
+# Finding the best number of clusters for k-means
+library(NbClust)
+market_st = standardize(market)
+
+contents(market_st)
+
+# Plot wss plot
+wss_plot(market_st)
+
+# Use NbClust function to validate number of clusters
+NbClust(market_st,distance="euclidean",
+        min.nc = 2,max.nc = 5,method = "kmeans")
+
+```
+
+NbClust simulates 30 different cluster analyses to identify the best number of clusters to use. Initially, we were recommended three clusters. However, the day before the presentation, we ran the function again and it recommended us two clusters. As we got two different suggestions from NbClust, we decided to use the WSS plot to determine how many clusters were best. After graphing the WSS plot, we agreed three clusters would be the optimal amount of clusters.
+
+```{r}
+# Running Clustering
+set.seed(123)
+fit.km = kmeans(market_st, 3, nstart=30)
+fit.km$size
+fit.km$centers
+fit.km$cluster
+market_st$cluster = fit.km$cluster
+```
+```{r}
+# Plots
+profile_plot(market_st, type="line")
+profile_plot(market_st, type="bar")
+
+```
+```{r}
+# Add Clustering to market df
+market$cluster = factor(fit.km$cluster)
+
+# Add PCA to market df
+market = score(market, fit)
+```
+```{r}
+fviz_cluster(fit.km, market_st, geom = "point", 
+             ellipse.type = "norm",
+             repel=T)
+```
+
+**Graphing Variables for Analysis**
+```{r}
+#Graphing Income
+ggplot(market, aes(x=cluster, y=Income)) +
+  geom_boxplot() +
+  labs(title="Total Income per Cluster")
+```
+
+After plotting income, we saw Cluster 3 had the highest average income followed by Cluster 1 and Cluster 2.
+
+```{r}
+#Graphing Marital Status
+crosstab(market, Marital_Status, cluster,
+         type = "colpercent",
+         plot=T)
+
+```
+
+Cluster 1 has the greatest percentage of married people, followed by Cluster 2 and Cluster 3. The difference between the three clusters is small, though.
+
+```{r}
+#Graphing Education
+crosstab(market, Education, cluster,
+         type = "colpercent",
+         plot=T)
+
+```
+
+Cluster 1 had the greatest percentage of people with high level education. Cluster 2 had a greater percentage of people with high level education compared to Cluster 3, but had more people with no college education.
+
+```{r}
+#Graphing Kid at Home
+crosstab(market, Kidhome, cluster,
+         type = "colpercent",
+         plot=T)
+
+```
+
+Most of Cluster 3 did not have kids at home, while many of Cluster 1 did not either. Majority of Cluster 2 had at least 1 child.
+
+```{r}
+#Graphing Teenhome
+crosstab(market, Teenhome, cluster,
+         type = "colpercent",
+         plot=T)
+
+```
+
+Majority of Cluster 1 had a teenager at home, while nearly half of Cluster 2 did as well. 83% of Cluster 3 did not have teens at home.
+
+```{r}
+#Response
+crosstab(market, Response, cluster,
+         type = "colpercent",
+         plot=T)
+```
+
+Cluster 1 and 2 did not seem to be interested in marketing campaigns, while Cluster 3 seemed the most interested.
+
+```{r}
+#Age
+ggplot(market, aes(x=cluster, y=Age)) +
+  geom_boxplot()
+
+age_clust = market %>%
+  group_by(cluster) %>%
+  summarize(avg_age = mean(Age, na.rm=TRUE))
+
+```
+
+All clusters were in a similar age range, with Cluster 1 being the oldest and Cluster 2 the youngest.
+
+```{r}
+#Purchases of products
+library(reshape2)
+market %>%
+  select(cluster, MntWines, MntFruits, MntFishProducts, 
+         MntMeatProducts, MntSweetProducts, MntGoldProds)%>%
+  melt(id='cluster')%>%
+  ggplot(aes(as_factor(cluster), value))+
+  geom_boxplot()+
+  facet_wrap(~variable, ncol=5)
+
+market %>%
+  select(cluster, MntFruits, MntFishProducts, 
+        MntSweetProducts, MntGoldProds)%>%
+  melt(id='cluster')%>%
+  ggplot(aes(as_factor(cluster), value))+
+  geom_boxplot()+
+  facet_wrap(~variable, ncol=5)
+
+
+market %>%
+  select(cluster, MntWines, MntMeatProducts)%>%
+  melt(id='cluster')%>%
+  ggplot(aes(as_factor(cluster), value))+
+  geom_boxplot()+
+  facet_wrap(~variable, ncol=5)
+```
+
+To observe what items people purchased, we made two separate charts to better visualize the data.   
+Cluster 3 bought the most of every item. Cluster 1 seemed more interested in gold and wine products than some of the products. On average, Cluster 2 did buy a large amount of items across all categories 
+
+```{r}
+#Purchase Platform
+market %>%
+  select(cluster, NumDealsPurchases, NumWebPurchases,
+         NumCatalogPurchases, NumStorePurchases,
+         NumWebVisitsMonth) %>% 
+  melt(id='cluster')%>%
+  ggplot(aes(as_factor(cluster), value))+
+  geom_boxplot()+
+  facet_wrap(~variable, ncol=5)
+```
+
+People in Cluster 1 tend to shop the most deals, while also shopping online and in store. Cluster 3 seems to prefer to shop in store and through catalogs-- but do not seem to shop the deals. Cluster 2 shops in store more but also visits the website the most.
+
+```{r}
+#Accepted Campaigns per Cluster
+market %>%
+  select(cluster, AcceptedCmp3,
+         AcceptedCmp5, AcceptedCmp4,
+         AcceptedCmp1, AcceptedCmp2) %>% 
+  melt(id='cluster')%>%
+  ggplot(aes(as_factor(cluster), value))+
+  geom_col()+
+  facet_wrap(~variable, ncol=5)
+
+```
+
+
+
+```{r}
+#Recency Histogram
+ggplot(market, aes(x = Recency)) +
+  geom_histogram(bins = 20) +
+  facet_wrap(~cluster)
+
+```
+
+### Results and Discussion 
+
+Following our analysis of the acceptance of marketing campaigns, we chose to not come to any conclusion regarding those results - as we do not know what each campaign comprised of.   
+Overall, we noticed that Cluster 2 seems to purchase the fewest items but seem to shop more in store than anywhere else.   
+Cluster 2 did lead all clusters in online visits, however. Cluster 3 seems to be the wealthiest cluster and therefore was the cluster that made the most purchases. Age, marital status, and education seemed evenly distributed between clusters. Cluster 1 was the cluster that was in between Cluster 2 and Cluster 3.     
+
+**Cluster 1 Characteristics**
+
+- Average income of $58K
+- Average age of 50
+- Highest percentage of level 3 education
+- Has the most online purchases
+- Shops deals often
+- Second highest purchasing power across all categories
+- Only 12% accepted last campaign
+- 78% do not t have kids
+
+**Cluster 1 Recommendations**
+
+Cluster 1 is the cluster with the second highest purchasing power across all product categories and the highest number of online purchases. Members of this cluster also shop deals often. Because they have the most online purchases, one recommendation for the business would be to increase the amount of online promotions for this cluster. This can include marketing strategies such as email marketing campaigns, targeted ads on Google and other social media, and offering more online deals. It was also noted that this cluster buys a decent amount of wine and gold. Therefore, wine and gold can be the subject of the targeted ads and deals to minimize marketing cost per sale. Strategic promotions in-store and through physical mail are also recommended.
+
+**Cluster 2 Characteristics**
+
+- Average income of $34K
+- Average age of 43
+- Only cluster with basic education
+- Has the least purchases on all platforms
+- Shops deals occasionally
+- Purchases the least products across all categories BUT has the highest website visits
+- Only 10% accepted last campaign
+- 73% have kids
+
+**Cluster 2 Recommendations**
+
+Cluster 2 is the cluster with the lowest purchasing power across all product categories and platforms. However, one interesting finding is that they have the highest number of website visits and the highest percentage of having kids. That is, this cluster visits the website the most but does not purchase often. Because of this, our recommendations would be to make the website more enticing and make online deals or offers more visible and easily accessible. One way of doing this would be to design the website with a clean layout of products and take clear product photos. This may attract more website purchases from this cluster. Another way to implement this is to have a section for special deals, like “Savers Deals”, and promote deals for products often bought by parents such as kids' snacks, toys and expensive nutritious foods. Another recommendation would be to promote online shopping in-store by highlighting the benefits of purchasing through the website.
+
+
+**Cluster 3 Characteristics**
+
+- Average income fo $75K
+- Average age of 46
+- Lowest percentage of level 3 education
+- Has the most in-store and catalog purchases BUT has the lowest web visits
+- Do not shop deals
+- Highest purchasing power across all product categories
+- Almost 3x more responsive to last campaign 
+- 95% don’t have kids
+
+
+**Cluster 3 Recommendations** 
+
+Cluster 3 is the cluster with the highest purchasing power across all product categories and earns the most income. Almost all members of the cluster do not have kids. Another interesting finding is that they have the most in-store and catalog purchases but also has the lowest web visits. Based on this, our recommendations are focused on making adjustments in-store and in the catalog. As they are the most frequent purchasers of wine and meat, one recommendation would be to place the wines and meats together in-store to encourage complementary sales. Another recommendation would be to send them customized catalogs that are focused on more expensive and luxurious products of each product category. Additionally, these products can be advertised to this cluster in-store and they can be encouraged to try shopping on the website by highlighting the benefits.
+
+### Suggestions to future researchers
+
+Because the NbClust function recommended us two clusters after the fact that we made our analyses using its initial suggestion of three clusters, one suggestion would be to run a k-means cluster analysis with two clusters and see how the results differ from three clusters. Also, an algorithm can be used to identify the most important features of the data set before running a PCA analysis and cluster analysis.
+
