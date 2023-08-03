@@ -1,0 +1,825 @@
+---
+title: "Customer Segmentation using Principle Component Analysis and K-means Clustering"
+output: 
+  html_document:
+    toc: true
+    highlight: tango
+    theme: paper
+    keep_md: true
+    df_print: paged
+  html_notebook:
+    highlight: tango
+    theme: paper
+date: "2023-07-26"
+tags:
+  - customer segmentation
+  - marketing recommendations
+  - unsupervised learning
+authors:
+  - Andres Cojuangco
+updated_at: "2023-08-03"
+---
+### Project Objectives
+
+<b> Apply customer segmentation on customer retail data to: </b>
+
+- Develop customer profiles
+- Understand each profile's spending behavior 
+- Find out each profile's preferred purchasing channel
+- Provide recommendations to the marketing team and analytics team
+
+---
+
+### Data Description
+The data set is provided by Dr. Omar Romero-Hernandez, a researcher and professor at U.C. Berkeley's Haas School of Business and the Hult International Business School. Unfortunately, there is no information provided on how the data was collected. The link to it can be found here [reference card](https://www.kaggle.com/datasets/imakash3011/customer-personality-analysis?datasetId=1546318&sortBy=voteCount&language=R).       
+The data set contains 31 columns and 2240 rows, and can be thematically divided into 4 sections: 
+
+* **Customer Attributes (9 columns)**,
+  + *ID:* Customer's unique identifier (int)
+  + *Year_Birth:* Customer's birth year (int)
+  + *Education:* Customer's education level (obj)
+  + *Marital_Status:* Customer's marital status  (obj)
+  + *Income:* Customer's yearly household income (int)
+  + *Kidhome:* Number of children in customer's household (int)
+  + *Teenhome:* Number of teenagers in customer's household (int)
+  + *Dt_Customer:* Date of customer's enrollment with the company (obj)
+  + *Recency:* Number of days since customer's last purchase (int)
+  
+* **Customer Behavior (12 columns)**:
+  + *MntWines:* Amount spent on wine in last 2 years (int)
+  + *MntFruits:* Amount spent on fruits in last 2 years (int)
+  + *MntMeatProducts:* Amount spent on meat in last 2 years (int)
+  + *MntFishProducts:* Amount spent on fish in last 2 years (int)
+  + *MntSweetProducts:* Amount spent on sweets in last 2 years (int)
+  + *MntGoldProds:* Amount spent on gold in last 2 years (int)
+  + *NumWebPurchases:* Number of purchases made through the company's web site (int)
+  + *NumCatalogPurchases:* Number of purchases made using a catalogue (int)
+  + *NumStorePurchases:* Number of purchases made directly in stores (int)
+  + *NumWebVisitsMonth:* Number of visits to company's web site in the last month (int)
+  + *NumDealsPurchases:* Number of purchases made with a discount (int)    
+  + *Complain* 1 if customer accepted the offer in the last campaign, 0 otherwise
+  
+* **Customer Response to Marketing Activations (6 columns)**:
+  + *AcceptedCmp1:* 1 if customer accepted the offer in the 1st campaign, 0 otherwise (int)
+  + *AcceptedCmp2:* 1 if customer accepted the offer in the 2nd campaign, 0 otherwise (int)
+  + *AcceptedCmp3:* 1 if customer accepted the offer in the 3rd campaign, 0 otherwise (int)
+  + *AcceptedCmp4:* 1 if customer accepted the offer in the 4th campaign, 0 otherwise (int)
+  + *AcceptedCmp5:* 1 if customer accepted the offer in the 5th campaign, 0 otherwise (int)
+  + *Response:* 1 if customer accepted the offer in the last campaign, 0 otherwise (int)     
+
+* **Channels (4 columns)**:
+  + *NumWebPurchases*: Number of purchases made through the company’s web site (int)
+  + *NumCatalogPurchases*: Number of purchases made using a catalogue (int)
+  + *NumStorePurchases*: Number of purchases made directly in stores (int)
+  + *NumWebVisitsMonth*: Number of visits to company’s web site in the last month (int)
+  
+```{r setup, include=FALSE}
+# setting up chunks for knitting
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, results='hide', fig.path='Figs/')
+options(scipen = 999)
+```
+
+```{r libraries}
+# Setting up the Environment
+library(readr)
+library(tidyverse)
+library(mice)
+library(VIM)
+library(lubridate)
+library(scales)
+library(corrr)
+library(ggcorrplot)
+library(FactoMineR)
+library(NbClust)
+library(reshape2)
+library(pander)
+library(purrr)
+library(factoextra)
+library(qacBase)
+library(RColorBrewer)
+library(gridExtra)
+library(knitr)
+```
+
+```{r loading_data, results='markup'}
+# Load the data
+customer_data <- read.table("/Users/andres/Desktop/data_science_projects/customer_segmentation/marketing_campaign.csv", sep = "\t", header = T)
+
+# Convert data to a data frame
+customer_data <- as.data.frame(customer_data)
+
+# Display first few rows
+head(customer_data)
+
+# Set color pallete
+set1_palette <- brewer.pal(9, "Set1")
+```
+
+## Data Preparation and Exploratory Data Analysis
+
+This section of the code aims to use the dplyr package to clean and recode data for Principle Component Analysis (PCA) and K-means clustering and deal with missing values. To do this, univariate analysis on each feature was conducted to identify variables that are not needed, as well as to identify and remove outliers (an important step for k-means clustering). The analysis includes exploring the responses and spread of each feature with boxplots, bar graphs, and histograms. Then, any features with ordinal/nominal data were turned into factors. 
+
+### Exploring Missing Data 
+
+```{r missing_data}
+# Visualizing missing data
+md.pattern(customer_data,plot = TRUE, rotate.names = T)
+
+# Getting percentage of missing data
+aggr(customer_data, col=c('white','red'), numbers=TRUE, sortVars=TRUE, cex.axis=.7, gap=3, ylab=c("Percentage of missing data","Missing Data Pattern"))
+```
+
+Since the missing data in the Income variable comprises only 1.1% of the data, we can omit these rows using list wise deletion. Moreover, the purpose of Z_CostContact and Z_Revenue remain unclear so these columns will be omitted.
+
+```{r omit}
+# Remove 24 rows with missing Income
+customer_data = na.omit(customer_data)
+
+# Remove Z_CostContact and Z_Revenue
+customer_data <- customer_data %>% select(-Z_CostContact,-Z_Revenue)
+```
+
+### Exploring ID
+
+```{r explore_id, results='asis'}
+# Count number of rows and the number of unique IDs
+customer_data %>% 
+  select(ID) %>%
+  summarise(total_rows = n(), total_unique = n_distinct(ID)) %>%
+  pander(caption = "Checking unique values in ID")
+```
+
+Since the number of unique IDs are equal to the number of total rows, there are no repeats of IDs in the data. Thus, each row represents one unique customer, meaning the IDs will not be needed for the clustering.
+
+```{r}
+# Remove IDs
+customer_data <- customer_data %>% select(-ID)
+```
+
+### Exploring Age from Year_Birth
+
+```{r}
+# Calculating age from Year_Birth
+customer_data <- customer_data %>% 
+  mutate(Year_Birth = 2023 - Year_Birth) %>%
+  rename(Age = Year_Birth)
+```
+
+```{r}
+# Boxplot of age
+ggplot(customer_data, aes(x=Age, fill = "#F8766D")) + 
+  geom_boxplot() + 
+  theme_minimal() +
+  labs(title = "Boxplot of Age")+
+  guides(fill = FALSE) 
+```
+
+There are some people who are way too old to be true data so we will remove outliers. 
+
+```{r, fig.show='hide'}
+# Removing outliers from Age
+outlier <- boxplot(customer_data$Age, plot=T)$out
+customer_data <- customer_data[-which(customer_data$Age %in% outlier),]
+
+#Re-plot data
+boxplot(customer_data$Age)
+```
+
+```{r histogram_age}
+# histogram of age
+ggplot(customer_data, aes(x = Age)) + 
+  geom_histogram(fill = "#F8766D", color = "black", bins = 15) +
+  theme_minimal() +
+  labs(title="Histogram of Age", x= "Age") 
+```
+
+Age seems evenly distributed.
+
+### Exploring Education
+
+```{r explore_education}
+# Exploring Education
+ggplot(customer_data) + geom_bar(aes(x=Education, fill = Education)) + 
+  theme_minimal() + 
+  labs(x = "Education Entries")
+```
+
+
+```{r}
+# Converting to Factors
+customer_data$Education <- fct_collapse(customer_data$Education,
+"3" = c("2n Cycle", "Master","PhD"),"1" = "Basic",
+"2" = "Graduation")
+customer_data$Education <- as.numeric(levels(customer_data$Education))[customer_data$Education]
+```
+
+We will convert the variable Education into a factor of three levels: "1", which is a receiver of basic education, "2", which is an undergraduate degree-holder, and "3", which is a higher education degree-holder. Convertinng them into numeric factors will make it more useable during PCA and k-means clustering.
+
+### Exploring Marital Status
+
+```{r explore_marital}
+# Barplot Marital Status
+ggplot(customer_data) + geom_bar(aes(x=Marital_Status, fill = Marital_Status))+ 
+  theme_minimal() + 
+  labs(x = "Marital Status Entries")
+```
+
+```{r}
+# Removing unusual answers
+customer_data <- customer_data %>% 
+  filter(Marital_Status != "YOLO" | Marital_Status != "Alone" | Marital_Status != "Absurd")
+ 
+# Collapsing to categories
+customer_data$Marital_Status <- fct_collapse(customer_data$Marital_Status,
+"1" = c("Divorced","Single","Widow"),"2" = c("Married","Together"))
+
+# Convert to factors
+customer_data$Marital_Status <- as.numeric(levels(customer_data$Marital_Status))[customer_data$Marital_Status]
+# Remove 7 failed rows
+customer_data <- na.omit(customer_data)
+```
+
+We will filter out unusual answers in variable Marital_Status that were likely answered as a joke. We then collapsed similar responses into a factor with two levels: "1", which indicates one is not legally married, and "2", which indicates one is married.
+
+```{r factor_marital}
+# Re-plot data
+ggplot(customer_data) + geom_bar(aes(x=Marital_Status))+ 
+  theme_minimal() + 
+  labs(x = "Factored Marital Status Entries")
+```
+
+### Exploring Income
+
+```{r explore_income}
+# Boxplot for Income
+ggplot(customer_data, aes(x=Income)) + 
+  geom_boxplot(fill = set1_palette[2]) + 
+  theme_minimal() +
+  labs(title = "Boxplot of Income")+
+  guides(fill = FALSE) 
+```
+
+There are extreme outliers that need to be removed.
+
+```{r, fig.show='hide'}
+# Removing Outliers in Income
+outliers = boxplot(customer_data$Income, plot=T)$out
+customer_data = customer_data[-which(customer_data$Income %in% outliers),]
+# Check for any outliers
+boxplot(customer_data$Income)
+```
+
+```{r histograsm_income}
+ggplot(customer_data, aes(x = Income)) + 
+  geom_histogram(fill = set1_palette[2], color = "black", bins = 30) +
+  theme_minimal() +
+  labs(title="Histogram of Income", x= "Age") 
+```
+
+Income seems evenly distributed.
+
+### Exploring Recency
+
+```{r}
+ggplot(customer_data) + geom_histogram(aes(x = Recency), bins=100, fill = set1_palette[8], color = "black")
+```
+
+Recency seems evenly distriibuted.
+
+### Combining Kidhome and Teenhome
+
+```{r}
+# Combining Kidhome and Teenhome
+customer_data <- customer_data %>% mutate(Kids = Kidhome + Teenhome)
+```
+
+```{r explore_kids}
+# Plot Kids
+ggplot(customer_data) + geom_bar(aes(x=Kids, fill = factor(Kids)))+ 
+  theme_minimal() + 
+  labs(x = "Number of Kids at Home", fill = "# Kids at Home")
+```
+
+The families range from 0 to 3 kids. Now, we will remove original features like Kidhome and Teenhome now that they are combined into Kids.
+
+```{r}
+# Removing Kidhome and Teenhome
+customer_data <- customer_data %>% select(-c("Kidhome", "Teenhome"))
+```
+
+### Exploring Total Expenses, Total Frequency, and Total Accepted Campaigns 
+
+```{r totals, results='hide'}
+# Adding up the totals
+customer_data <- customer_data %>%
+  mutate(total_expenses = MntWines + MntFruits + MntMeatProducts + MntFishProducts
+         + MntSweetProducts + MntGoldProds,
+         total_frequency = NumDealsPurchases + NumWebPurchases + NumCatalogPurchases
+         + NumStorePurchases,
+         total_accepted = AcceptedCmp1 + AcceptedCmp2 + AcceptedCmp3 + AcceptedCmp4
+         + AcceptedCmp5)
+
+# Display first few rows
+head(customer_data %>% select(total_expenses, total_frequency, total_accepted))
+```
+
+```{r}
+# Plot Boxplots for all three features
+boxplot_total_expenses <- ggplot(customer_data, aes(x = total_expenses)) + 
+  geom_boxplot(fill=set1_palette[3]) + 
+  labs(title = "Boxplot of Total Expenses", x = "Total Expenses in 2 years") 
+
+boxplot_total_frequency <- ggplot(customer_data, aes(x = total_frequency)) + 
+  geom_boxplot(fill=set1_palette[4]) + 
+  labs(title = "Boxplot of Total Frequency", x = "Total Frequency in 2 years") 
+
+boxplot_total_campaigns <- ggplot(customer_data, aes(x = total_accepted, fill = factor(total_accepted),)) + 
+  geom_histogram(fill=set1_palette[5], color="black",bins = 4) + 
+  stat_count(geom = "text", aes(label = ..count..)) +
+  labs(title = "Boxplot of Total Accepted Campaigns", x = "Total Accepted Campaigns in 2 years", fill="Number of Campaigns Accepted") 
+
+grid.arrange(boxplot_total_expenses, boxplot_total_frequency, boxplot_total_campaigns, nrow = 3)
+
+```
+
+Total expenses and Accepted campaigns appear to be skewed to the right while total frequency seems evenly distributed.
+
+### Exploring Dt_customer
+
+```{r, results='asis'}
+# Save dates and convert to POSIXct to be able to work with scales pkg
+dates <- data.frame(customer_data$Dt_Customer)
+dates$date <- as.POSIXct(dmy(dates$customer_data.Dt_Customer))
+
+# Save min and max
+min <- min(dates$date)
+max <- max(dates$date)
+
+# Display min and max
+print(paste0("Earliest join date is ", min))
+print(paste0("Latest join date is ", max))
+```
+
+```{r explore_dt_customer}
+# Define custom function for generating breaks by month
+by_month <- function(x, n = 1) {
+  min_date <- floor_date(min(x, na.rm = TRUE), unit = "month") # use floor_date to round down the minimum and 
+  max_date <- floor_date(max(x, na.rm = TRUE), unit = "month") # maximum dates to the nearest month
+  breaks <- seq(min_date, max_date, by = paste0(n, " month"))
+  breaks
+}
+
+# Plot data
+ggplot(dates, aes(date)) +
+  geom_histogram(breaks= by_month(dates$date,1), fill = set1_palette[6], color = "black") +
+  scale_x_datetime(labels = date_format("%Y-%b"),
+                   breaks = by_month(dates$date,1)) +
+  theme(axis.text.x = element_text(angle=90)) 
+```
+
+The dates of enrollment seem evenly distributed. Although it seems to be suggesting enrollment or registration to a program or newsletter that we know nothing about. Therefore, it will be removed.
+
+```{r}
+customer_data <- customer_data %>% select(-Dt_Customer)
+```
+
+###  Exploring Complain
+```{r, results='asis'}
+customer_data %>% count(Complain) %>% pander(caption = "Counts of Complains")
+```
+
+Since only 20 people have complained in the last two years, this feature won't be useful.
+
+```{r}
+# Remove Complain
+customer_data <- customer_data %>% select(-Complain)
+```
+
+### Exploring Response
+
+```{r explore_response, results='asis'}
+# count unique vaues
+customer_data %>% count(Response) %>% pander(caption = "Counts of Response to Last Campaign")
+```
+
+Since we do not know the nature of the last campaign, we can remove this feature as well.
+
+```{r}
+# Remove Response
+customer_data <- customer_data %>% select(-Response)
+```
+
+The resulting data frame after cleaning looks like this.
+```{r cleaned_data, results='markup'}
+head(customer_data)
+```
+
+## Conducting Principal Component Analysis (PCA) 
+
+Principal component analysis (PCA) is a technique that transforms high-dimensions data into lower-dimensions while retaining as much information as possible. It uses linear algebra to identify the most important features in a data set that contribute a data set's variance. Thus, it will be helpful in determining key features that serve as points of differentiation among the segments produced from k-means clustering.
+
+In this section, we use FactoMineR to conduct PCA. First, we need save a copy of our main data frame where linear combinations of the features are removed. Combinations such as total expenses, frequency, and accepted will not be useful for PCA. Then, we standardize the data and plot a correlation matrix with it.
+
+```{r}
+pca_data <- customer_data %>% select(-starts_with("total"))
+```
+
+```{r, resuts='hide'}
+# normalize data
+pca_data_normalized <- scale(pca_data)
+# display first 6 rows
+head(pca_data_normalized)
+```
+
+```{r cor_matrix}
+corr_matrix <- cor(pca_data_normalized)
+ggcorrplot(corr_matrix)
+```
+
+Lastly, we conduct the PCA analysis.
+
+```{r pca, results='hide'}
+# apply pca on corplot
+data.pca <- princomp(corr_matrix)
+summary(data.pca)
+```
+```{r pca_viz}
+# Visualize cumulative variance that each PC explains
+fviz_eig(data.pca, addlabels = TRUE)
+
+# Visualize contributors of the first 10 PCs
+fviz_contrib(data.pca, choice = "var", axes = 1:10)
+```
+
+The first 10 principle components explain 95% of the variance. The top 10 contributors to the first 10 principal components are income, amount spent on meat, sweets, fish, wines, and fruits, the number of web visits per month, the number of kids, and the number of in-store and catalog purchases. The top 10 contributors will help differentiate the clusters later on during the construction of the customer profiles in the discussion section.
+
+## Applying K-means Clustering
+
+In this section, we use the k-means clustering algorithm to segment the customers. First, we need to find out how many clusters, k, we need using a WSS plot, silhouette analysis, and an ensemble function called NBClust.
+
+```{r cluster_hyperparam}
+# Finding optimal number for k (number clusters)
+fviz_nbclust(pca_data_normalized, kmeans, method = 'wss')
+fviz_nbclust(pca_data_normalized, kmeans, method = 'silhouette')
+```
+
+```{r nbclust, fig.show='hide', results='hide', echo=FALSE, eval=FALSE}
+# Use NbClust function to validate number of clusters
+NbClust(pca_data_normalized,distance="euclidean",
+         min.nc = 2,max.nc = 5,method = "kmeans")
+```
+
+For the first plot, the sum of squared errors seems to slow down from three clusters to four clusters. This implies a k=3. However, the silhouette analysis and the ensemble clustering algorithm, which runs 30 different kind of hyper parameter (k) tests, insists on a k=2. Thus, two clusters will be used. Now, let's run the k-means clustering algorithm with k=2 and visualize the results.
+
+```{r clustering}
+# Running clustering with 2 centers and 50 simulations
+set.seed(1234)
+fit.km <- kmeans(pca_data_normalized, center=2, nstart=50) 
+# visualize clusters
+fviz_cluster(fit.km, data = pca_data_normalized, geom = "point",
+             repel=T)
+
+```
+
+The results are two clusters that are almost linearly separable .
+
+```{r, results='hide'}
+# Match customer data with their clustering
+segment_customers <- customer_data %>% mutate(cluster = factor(fit.km$cluster))
+# count clusters
+segment_customers %>% count(cluster)
+```
+
+## Results: Cluster Analysis 
+
+### Customer Attributes/Demographics
+
+```{r cluster_age, results='hide'}
+#Age
+ggplot(segment_customers, aes(x=cluster, y=Age, color = cluster)) +
+  geom_boxplot() +
+  labs(title="Age per Cluster")
+```
+
+```{r, results='hide'}
+# Calculating median age per cluster
+age_clust = segment_customers %>%
+  group_by(cluster) %>%
+  summarize(median_age = median(Age, na.rm=TRUE))
+age_clust
+```
+
+```{r cluster_education, results='hide'}
+# Graphing Education
+cluster_crosstab_education <- crosstab(segment_customers, Education, cluster,
+         type = "colpercent",
+         plot=T)
+
+# Counting education by cluster
+cluster_histogram_education <- segment_customers %>% ggplot(aes(Education, fill=cluster)) + 
+  geom_histogram(binwidth = 1, color = "black") + 
+  labs(title = "Count of Education Level by Cluster", 
+       caption = "1 is Basic Education, 2 is GRaduated, 3 is Higher Level Studies") +
+  facet_wrap(vars(cluster)) 
+  
+grid.arrange(cluster_crosstab_education, cluster_histogram_education, ncol=2)
+
+```
+
+```{r cluster_marital}
+#Graphing Marital Status
+cluster_crosstan_marital <- crosstab(segment_customers, Marital_Status, cluster,
+         type = "colpercent",
+         plot=T)
+
+#Counting marital status per cluster
+cluster_histogram_marital<- segment_customers %>% ggplot(aes(Marital_Status, fill=cluster)) +
+  geom_histogram(binwidth = 1, color = "black") + 
+  labs(title = "Counts of Marital Status by Cluster", caption = "1 is Single and 2 is Married")
+  facet_wrap(vars(cluster))  
+
+grid.arrange(cluster_crosstan_marital,cluster_histogram_marital, ncol =2)
+```
+
+```{r cluster_income, results='asis', message=FALSE}
+# Graphing Income
+cluster_boxplot_income <- ggplot(segment_customers, aes(x=cluster, y=Income, color = cluster)) +
+  geom_boxplot() +
+  labs(title="Income per Cluster")
+
+# Counting number of income per cluster
+cluster_histo_income <- segment_customers %>% ggplot(aes(Income, fill=cluster)) + geom_histogram( color = "black") +  facet_wrap(vars(cluster)) 
+
+grid.arrange(cluster_boxplot_income, cluster_histo_income, nrow = 2)
+```
+
+```{r, results='asis'}
+
+# Calculating median Incomes for clusters
+segment_customers %>%
+  group_by(cluster) %>%
+  summarize(avg_income = median(Income, na.rm=TRUE)) %>%
+  pander(caption = "Median Income per Cluster")
+
+```
+
+
+```{r cluster_kids}
+# Graphing Kids at Home
+cluster_crosstab_kids <- crosstab(segment_customers, Kids, cluster,
+         type = "colpercent",
+         plot=T)
+
+
+# Counting number of kids per cluster
+cluster_histo_kids <- segment_customers %>% ggplot(aes(Kids, fill=cluster)) + 
+  geom_histogram(binwidth = 1, color = "black") + 
+  facet_wrap(vars(cluster))  + 
+  labs(title = "Count of Number of Kids at Home by Cluster")
+
+
+grid.arrange(cluster_crosstab_kids,cluster_histo_kids, ncol=2)
+```
+
+```{r cluster recency}
+
+cluster_boxplot_recency <- ggplot(segment_customers, aes(x=cluster, y=Recency, color=cluster)) + 
+  geom_boxplot() +
+  labs(title = "Recency by Cluster")
+cluster_boxplot_recency
+```
+
+### Customer Behavior: Product purchases and Channels
+
+```{r cluster_purchases}
+# Purchases of products
+
+cluster_unpop_products <- segment_customers %>%
+  select(cluster, MntFruits, MntFishProducts, 
+        MntSweetProducts)%>%
+  melt(id='cluster')%>%
+  ggplot(aes(cluster, value, color = cluster))+
+  geom_boxplot()+
+  labs(title = "Amount of Purchases by Cluster in Last 2 Years", y = "Amount Spent") +
+  facet_wrap(~variable, ncol=5)
+
+cluster_popular_products <- segment_customers %>%
+  select(cluster, MntWines, MntMeatProducts, MntGoldProds)%>%
+  melt(id='cluster')%>%
+  ggplot(aes(cluster, value, color = cluster))+
+  geom_boxplot()+
+  labs( y = "Amount Spent") + 
+  facet_wrap(~variable, ncol=5)
+
+grid.arrange(cluster_unpop_products, cluster_popular_products, nrow = 2)
+
+
+```
+
+```{r cluster_channels}
+#Boxplots for catalogue and store purchases and number of web visits per month (per cluster)
+cluster_channels <- segment_customers %>%
+  select(cluster,
+         NumStorePurchases,
+         NumWebPurchases,
+         NumCatalogPurchases, 
+         NumDealsPurchases,
+         NumWebVisitsMonth) %>% 
+  melt(id='cluster')%>%
+  ggplot(aes(as_factor(cluster), value, color = cluster))+
+  geom_boxplot()+
+  labs(title = "Total Number of Channel Purchases by Cluster in Last 2 Years", 
+       y = "Amount Spent",
+       x = "cluster") +
+  facet_wrap(~variable, ncol=5)
+
+cluster_channels
+```
+
+```{r}
+# Exploring median channels
+segment_customers %>%
+  group_by(cluster) %>%
+  summarize(web_visits = median(NumWebVisitsMonth, na.rm = TRUE),
+            store_purchases = median(NumStorePurchases, na.rm = TRUE),
+            web_purchases = median(NumWebPurchases, na.rm = TRUE),
+            catalog_purchases = median(NumCatalogPurchases, na.rm = TRUE),
+            deals_purchases = median(NumDealsPurchases, na.rm = TRUE)) %>%
+  gather(key = "Product", value = "Median", -cluster) %>%
+  ggplot(aes(x = Product, y = Median, fill = factor(cluster))) +
+  geom_bar(position = "dodge", stat = "identity", width = 0.7) +
+  geom_text(aes(label = Median), position = position_dodge(width = 0.7), vjust = -0.4) +
+  labs(title = "Median Purchases by Channel and Cluster",
+       x = "Purchase Channel",
+       y = "Median Amount",
+       fill = "Cluster") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+```
+
+### Customer Totals over 2 Years: Frequency, Cumalitive Expenses, Number of Campaigns Accepted, and Expenses per Product
+
+```{r}
+# Total Frequency
+cluster_boxplot_totFreq <- ggplot(segment_customers, aes(x=cluster, y=total_frequency, fill = cluster)) +
+  geom_boxplot() +
+  theme_minimal() + 
+  labs(title="Total Frequency per Cluster",
+       x = "Cluster",
+       y = "Total Frequency")
+
+# Total Spent
+cluster_boxplot_totSpent <- ggplot(segment_customers, aes(x=cluster, y=total_expenses, fill = cluster)) +
+  geom_boxplot() +
+  theme_minimal() + 
+  labs(title="Total Expenses per Cluster",
+       x = "Cluster",
+       y = "Total Expenses")
+
+# Total Accepted
+cluster_crosstab_totAccept <- crosstab(segment_customers, total_accepted, cluster,
+         type = "colpercent",
+         plot=T)
+
+cluster_histo_totAccepted <- segment_customers %>% ggplot(aes(total_accepted, fill=cluster)) + geom_histogram(binwidth = 1, color = "black") + facet_wrap(vars(cluster)) 
+
+grid.arrange(cluster_boxplot_totFreq,
+             cluster_boxplot_totSpent,
+             cluster_crosstab_totAccept,
+             cluster_histo_totAccepted, 
+             nrow = 2,
+             ncol = 2)
+
+```
+
+```{r}
+segment_customers %>%
+  group_by(cluster) %>%
+  summarize(avg_total_spent = median(total_expenses, na.rm=TRUE),
+            avg_total_freq = median(total_frequency, na.rm=TRUE),
+            avg_total_accept = median(total_accepted, na.rm=TRUE),
+            avg_spend_per_item = round(sum(total_expenses) / sum(total_frequency), 2)) 
+
+```
+
+
+```{r}
+# Calulating total explenses by product
+totals_product <- segment_customers %>%
+  group_by(cluster) %>%
+  summarize(total_wines = sum(MntWines),
+            total_fruits = sum(MntFruits),
+            total_sweets = sum(MntSweetProducts),
+            total_meat = sum(MntMeatProducts),
+            total_fish = sum(MntFishProducts),
+            total_gold = sum(MntGoldProds)) %>%
+  gather(key = "Product", value = "Total", -cluster) %>%
+  ggplot(aes(x = Product, y = Total, fill = factor(cluster))) +
+  geom_bar(position = "dodge", stat = "identity", width = 0.7) +
+  geom_text(aes(label = Total), position = position_dodge(width = 0.7), vjust = -0.4) +
+  labs(title = "Total Purchases by Product Category and Cluster",
+       x = "Product Category",
+       y = "Total Amount",
+       fill = "Cluster") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+totals_product
+```
+
+
+### Cluster 1 Breakdown:
+
+#### Attributes
+- Much lower income compared to Cluster 2 with a median average of $38,620
+- Median age is 53, similar spread to Cluster 2
+- 66% are married
+- 89% have kids, majority have 1 kid at home
+- 4% have higher level education
+- Similar even spread to Cluster 2
+
+#### Behavior
+
+- Much lower spend across all product categories,
+- Average total expenses in last two years is $96
+- Much lower purchase frequency than Cluster 2 with median of 9 purchases
+- Average spend per item is $19.14
+- Top 2 products that attracted most spending are meat and wine
+
+#### Channels
+- Lower average number of store purchases compared to Cluster 2 with a median of 3
+- Barely any catalog purchases, median of 1
+- Barely any deals purchases, higher average than Cluster 2, median of 2
+- Lower number of web purchases than Cluster 2, with a median of 2
+- Visit website more than Cluster 2 with a median of 7 web visits
+
+#### Campaigns
+- Only 11% accepted campaigns, nobody accepted more than 3 campaigns
+
+### Cluster 2 Breakdown:
+
+#### Attributes
+- Much higher income compared to Cluster 2 with a median average of $71,952
+- Median age is 55, similar spread to Cluster 1
+- 62% are married
+- 58% do not have kids and the majority of the ones that do have 1 kid
+- Nobody has higher level education
+- Similar even spread to Cluster 1
+
+#### Behavior
+- Much higher spend across all product categories
+- Average total expenses in last two years is $1,192 
+- Much higher purchase frequency than Cluster 1 with median of 22 purchases
+- Average spend per item is $58.07
+- Top 2 products that attracted most spending are meat and Wine
+
+#### Channels
+- Higher average number of store purchases compared to Cluster 1 with a median of 9
+- Fair number of catalog purchases, median of 5
+- Barely any deals purchases, lower average than Cluster 1, median of 1
+- Higher number of web purchases than Cluster 1 with a median of 5
+- Visit website less than Cluster 1 with a median of 3 web visits
+
+#### Campaigns
+- 37% accepted campaigns
+
+## Discussion and Recommendations
+
+**NOTE: The Top 10 contributors in the PCA (Income, Kids, Meats, wines, fruits, sweets, fish, catalog purchases, in-store purchases, and website visits) were considered as points of differentiation when developing the customer profiles**
+
+#### <b>Cluster 1 - the Impulse Buyers:</b>
+
+Majority of Cluster 1 have significantly less spending power than Cluster 2 and have more kids at home. Their average spend is $96 with an average of 9 purchases in the last two years. To add, these customers mostly shop in-store with only three in-store purchases versus an average of two online purchases in the last two years. Interestingly,they spend more time visiting the website compared to Cluster 2 but check-out less. Moreover, this cluster has minimal response to campaigns, deals, and catalogs. Based on these, Cluster 1 could be considered impulse buyers that do not have a thought out shopping list or are simply passersby that may be comparing prices. This may be further supported by their low average spend per item of 
+$19.14. Location or inconvenience may be an issue since these people may be living too far a way from the store in order to buy in-store regularly. It is also possible that price is an issue since these customers have larger families and lower average income.
+
+#### <b>Cluster 1 Recommendations:</b>
+
+- Understand the obstacles to purchasing on the website and in-store. Overall, a great place to start would be investigating if price and location are relevant factors that are limiting the conversions. Analysts can do correlation analysis, hypothesis testing, or, if possible, A/B testing with different price levels to understand the impact of price on conversions. Furthermore, understanding where these customers are visiting from (distance or fuzzy location) and their customer journey both online and in-store are worth looking into. By understanding these factors, we can decide how much resources is worth spending to acquire these customers, increase conversions, and retain them.
+
+- Make improvements to the website to become easier to navigate, more intriguing, and attractive. Since this cluster mostly browses the website, we need to make sure that this group is landing on relevant page and has access to customer support. Having a seamless experience and innovating product display or recommending systems in browsing pages may serve a good investment. Removing any intrusive elements such as pop-ups or irrelevant ads from the customer journey may also prove to be helpful. One possible solution would be to direct them towards items on sale, time-sensitive deals, or providing discount codes if possible.
+
+
+#### <b>Cluster 2 - the Loyal Customers:</b>
+
+Cluster 2 has high spending power. Majority are married but more than half of the customers do not have children, which is 31% less than Cluster 1. Their average spend is $1,192 with an average of 22 purchases in the last two
+years. They spend the most on wine and meat. Similar to Cluster 1, shopping in-store is the most popular channel with an average of 9 purchases in the last two years. However, Cluster 2 has higher average of web purchases but a minimal number of web visits. This may imply that Cluster 2 has higher interest  in making web purchases than Cluster 1 but are less reliant on frequent visits to the website. It is also possible that awareness about the website within this cluster is low. Moreover, this cluster was more responsive to campaigns and catalogs but not deals. Based on these, Cluster 2 could be considered the loyal customers. This group purchases more frequently and spends $58.07 per item on average which is 3 times more than Cluster 1's average spend per item. They are also less responsive to deals. Thus, unlike Cluster 1, location, inconvenience, and price are likely to be less of an issue since they have higher income and less people to support.
+
+
+#### <b>Cluster 2 Recommendations:</b>
+
+- Understand their loyalty by connecting with customers. Offer incentives such as discounts or inclusive offers in-store to motivate them to take the time to share their positive or negative feedback. Another way to get organic feedback about what they like about the brand is hosting community-centered events that align with the brand's values and interests.
+
+- Investigate the minimal number of web visits through awareness and customer location. Understanding their awareness of the website and its usefulness to these customers will give us a glimpse of how an online platform can be utilized to streamline the customer journey. One possible strategy could be to promote the website and its benefits in-store. Asking about their awareness during in-person purchases may also provide a better idea of how known the website is and its usefulness. However, it is possible that these customers may live nearby the store and have no use for ordering online or deliveries. Through further analysis, ideas such as a online purchase & pick-up feature may serve to be useful for this group, shortening the customer journey. 
+
+- Since this cluster spends the most on wine and meats, creating online and in-store campaigns to promote complementary sales of these products can be done. One possible option could be to place these two items closer to each other within the store. Another solution could be to investigate the likelihood of purchasing a product given that a certain item is already in their basket.
+
+
+## Personal Learnings
+
+One of the main challenges was understanding how to integrate PCA and k-means clustering together and there are many approaches to do this. One approach is using the clustering algorithm on the PCA scores. Another approach is joining the PCA scores to the cleaned data set and applying the clustering on the resulting data set. In this project, the k-means clustering was used on the cleaned data set while the PCA was used to find out the most significant contributors to the data. This methodology's advantage is interpretability since each of the features in the cleaned data set are straightforward to understand. On the other hand, interpreting PCA scores is not as easy without several graphs and sufficient mathematical knowledge. Thus, this project used PCA to understand the most significant contributors to the variance in the data set in order to serve as significant points of differentiation among the clusters. In the future, it may be worth looking into the difference in silhouette score for each possible approach to check if there are significant differences in the strength of data used for clustering
+
+Another challenge was organizing graphs for numerous features. With the amount of features that needed to be cleaned and analyzed, it was important to keep the markdown file organized. I learned the importance of labeling r chunks and utilizing r markdown's global functions, like knitr, to keep track of the document and generate a clean html file. Another important learning was using ggplot2 to create compelling graphs that were properly labeled and visually appealing. Dividing the features into themes provided some structure to the order of processing and analysis the data. To add, using functions like facet wrap to group graphs shortened the code book. Moreover separating the code for data manipulation and the code for visualization appears to be good practice during testing. This prevents any errors from occurring when changes are made to a saved variable, making the code modular. As I embark on more projects, I will keep in mind to develop a style of code that keeps visualization and organization consistent and easy to read.
+
+
+
